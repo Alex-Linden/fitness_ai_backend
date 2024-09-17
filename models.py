@@ -63,3 +63,59 @@ class User(db.Model):
             "gender": self.gender,
             "benchmarks": self.benchmarks,
         }
+
+    @classmethod
+    def signup(cls, email, password, first_name, last_name, birthday, weight, gender, benchmarks):
+        """Sign up user.
+
+        Hashes password and adds user to system.
+        """
+        print('password', password)
+        hashed_pwd = bcrypt.generate_password_hash(password).decode('UTF-8')
+        print('hashed', hashed_pwd)
+        user = User(
+            email=email,
+            password=hashed_pwd,
+            first_name=first_name,
+            last_name=last_name,
+            birthday=birthday,
+            weight=weight,
+            gender=gender,
+            benchmarks=benchmarks,
+        )
+        token = jwt.encode({'username': username }, secret_key)
+
+        db.session.add(user)
+        return [user, token]
+
+    @classmethod
+    def authenticate(cls, email, password):
+        """Find user with `email` and `password`.
+
+        This is a class method (call it on the class, not an individual user.)
+        It searches for a user whose password hash matches this password
+        and, if it finds such a user, returns that user object.
+
+        If this can't find matching user (or if password is wrong), returns
+        False.
+        """
+
+        user = cls.query.filter_by(email=email).one_or_none()
+
+        if user:
+            is_auth = bcrypt.check_password_hash(user.password, password)
+            if is_auth:
+                token = jwt.encode({'email': email }, secret_key)
+                return [user, token]
+
+        return False
+
+    @classmethod
+    def create_token(cls, email):
+        """Create token for user"""
+        print('create_token')
+        print('secret key', secret_key)
+        token = jwt({'email': email }, secret_key)
+        return token
+
+
