@@ -2,6 +2,8 @@ from flask import Flask
 from flask_debugtoolbar import DebugToolbarExtension
 
 from forms import UserAddForm, UserEditForm, LoginForm
+from models import db, connect_db, User, Listing
+
 
 app = Flask(__name__)
 

@@ -65,14 +65,24 @@ class User(db.Model):
         }
 
     @classmethod
-    def signup(cls, email, password, first_name, last_name, birthday, weight, gender, benchmarks):
+    def signup(
+        cls,
+        email,
+        password,
+        first_name,
+        last_name,
+        birthday,
+        weight,
+        gender,
+        benchmarks,
+    ):
         """Sign up user.
 
         Hashes password and adds user to system.
         """
-        print('password', password)
-        hashed_pwd = bcrypt.generate_password_hash(password).decode('UTF-8')
-        print('hashed', hashed_pwd)
+        print("password", password)
+        hashed_pwd = bcrypt.generate_password_hash(password).decode("UTF-8")
+        print("hashed", hashed_pwd)
         user = User(
             email=email,
             password=hashed_pwd,
@@ -83,7 +93,7 @@ class User(db.Model):
             gender=gender,
             benchmarks=benchmarks,
         )
-        token = jwt.encode({'username': username }, secret_key)
+        token = jwt.encode({"username": username}, secret_key)
 
         db.session.add(user)
         return [user, token]
@@ -105,7 +115,7 @@ class User(db.Model):
         if user:
             is_auth = bcrypt.check_password_hash(user.password, password)
             if is_auth:
-                token = jwt.encode({'email': email }, secret_key)
+                token = jwt.encode({"email": email}, secret_key)
                 return [user, token]
 
         return False
@@ -113,16 +123,16 @@ class User(db.Model):
     @classmethod
     def create_token(cls, email):
         """Create token for user"""
-        print('create_token')
-        print('secret key', secret_key)
-        token = jwt({'email': email }, secret_key)
+        print("create_token")
+        print("secret key", secret_key)
+        token = jwt({"email": email}, secret_key)
         return token
 
 
 class Activity(db.Model):
     """An individual activity for a user"""
 
-    __tablename__ = 'activities'
+    __tablename__ = "activities"
 
     id = db.Column(
         db.Integer,
@@ -135,54 +145,45 @@ class Activity(db.Model):
         nullable=False,
     )
 
-    category = db.Column(
-        db.String(20)
-        nullable=False
-    )
+    category = db.Column(db.String(20), nullable=False)
 
-    distance = db.Column(
-        db.Float,
-        nullable=False
-    )
+    distance = db.Column(db.Float, nullable=False)
 
-    duration = db.Column(
-        db.Time,
-        nullable=False
-    )
+    duration = db.Column(db.Time, nullable=False)
 
-    notes = db.Column(
-        db.Text,
-        nullable=True
-    )
+    notes = db.Column(db.Text, nullable=True)
 
     user_id = db.Column(
         db.Integer,
-        db.ForeignKey('users.id', ondelete='CASCADE'),
+        db.ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
 
-    time = db.Column(
-        db.Time,
-        nullable=False
-    )
+    time = db.Column(db.Time, nullable=False)
 
-    complete = db.Column(
-        db.Boolean,
-        nullable=False
-    )
+    complete = db.Column(db.Boolean, nullable=False)
 
     def serialize(self):
         """Serialize to dictionary"""
 
-        return{
-            "id" : self.id,
+        return {
+            "id": self.id,
             "title": self.title,
             "Category": self.category,
             "Duration": self.duration,
             "Distance": self.distance,
-            "Notes" : self.notes,
-            "User" : self.user_id,
+            "Notes": self.notes,
+            "User": self.user_id,
             "Time": self.time,
-            "Completed" : self.complete,
+            "Completed": self.complete,
         }
 
+
+def connect_db(app):
+    """Connect this database to provided Flask app.
+
+    You should call this in your Flask app.
+    """
+
+    db.app = app
+    db.init_app(app)
