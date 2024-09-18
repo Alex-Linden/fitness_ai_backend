@@ -119,3 +119,70 @@ class User(db.Model):
         return token
 
 
+class Activity(db.Model):
+    """An individual activity for a user"""
+
+    __tablename__ = 'activities'
+
+    id = db.Column(
+        db.Integer,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    title = db.Column(
+        db.String(20),
+        nullable=False,
+    )
+
+    category = db.Column(
+        db.String(20)
+        nullable=False
+    )
+
+    distance = db.Column(
+        db.Float,
+        nullable=False
+    )
+
+    duration = db.Column(
+        db.Time,
+        nullable=False
+    )
+
+    notes = db.Column(
+        db.Text,
+        nullable=True
+    )
+
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+    )
+
+    time = db.Column(
+        db.Time,
+        nullable=False
+    )
+
+    complete = db.Column(
+        db.Boolean,
+        nullable=False
+    )
+
+    def serialize(self):
+        """Serialize to dictionary"""
+
+        return{
+            "id" : self.id,
+            "title": self.title,
+            "Category": self.category,
+            "Duration": self.duration,
+            "Distance": self.distance,
+            "Notes" : self.notes,
+            "User" : self.user_id,
+            "Time": self.time,
+            "Completed" : self.complete,
+        }
+
