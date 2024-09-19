@@ -1,10 +1,11 @@
 """SQLAlchemy models for fitness_ai."""
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
+from dotenv import load_dotenv
+import os
+import jwt
 
 from flask_bcrypt import Bcrypt
-from flask_sqlalchemy import SQLAlchemy
-import os
-from dotenv import load_dotenv
-import jwt
 
 load_dotenv()
 
@@ -48,7 +49,7 @@ class User(db.Model):
 
     gender = db.Column(db.Text, nullable=True)
 
-    benchmarks = db.Column(db.JSON, nullabel=True)
+    benchmarks = db.Column(db.JSON, nullable=True)
 
     def serialize(self):
         """Serialize to dictionary"""
@@ -93,7 +94,7 @@ class User(db.Model):
             gender=gender,
             benchmarks=benchmarks,
         )
-        token = jwt.encode({"username": username}, secret_key)
+        token = jwt.encode({"email": email}, secret_key)
 
         db.session.add(user)
         return [user, token]
