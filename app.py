@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, request, session, jsonify
 from flask_debugtoolbar import DebugToolbarExtension
 
 from forms import UserAddForm, UserEditForm, LoginForm
@@ -103,3 +103,12 @@ def login():
     return jsonify(errors=form.errors)
 
 
+@app.route('/logout', methods=["GET", "POST"])
+def logout():
+    """Handle user logout and redirect to homepage on success."""
+
+    if "token" in session:
+        del session["token"]
+        return jsonify(msg="logged out")
+    else:
+        return jsonify(msg="not logged in")
