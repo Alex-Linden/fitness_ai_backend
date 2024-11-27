@@ -3,6 +3,9 @@ import jwt
 from flask import Flask, request, session, jsonify
 from flask_debugtoolbar import DebugToolbarExtension
 
+from flask_login import LoginManager, UserMixin, login_user, logout_user,\
+    current_user
+
 from forms import UserAddForm, UserEditForm, LoginForm
 from models import db, connect_db, User
 
@@ -61,6 +64,8 @@ app.config['OAUTH2_PROVIDERS'] = {
     },
 }
 toolbar = DebugToolbarExtension(app)
+login_manager = LoginManager()
+
 
 connect_db(app)
 

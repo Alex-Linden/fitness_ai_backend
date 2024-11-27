@@ -2,6 +2,7 @@
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
+from flask_login import UserMixin
 import os
 import jwt
 
@@ -14,7 +15,7 @@ bcrypt = Bcrypt()
 db = SQLAlchemy()
 
 
-class User(db.Model):
+class User(UserMixin, db.Model):
     """User in the system."""
 
     __tablename__ = "users"
