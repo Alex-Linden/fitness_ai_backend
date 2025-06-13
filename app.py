@@ -1,6 +1,6 @@
 import os
 import jwt
-from flask import Flask, request, session, jsonify
+from flask import Flask, request, session, jsonify, g
 from flask_debugtoolbar import DebugToolbarExtension
 
 from flask_login import LoginManager, UserMixin, login_user, logout_user,\
@@ -175,3 +175,25 @@ def logout():
         return jsonify(msg="logged out")
     else:
         return jsonify(msg="not logged in")
+
+############################################################
+# General User routes - TODO: this was vibe coded don't trust
+
+
+@app.route('/user', methods=["GET", "POST"])
+def user():
+    """Handle user logout and redirect to homepage on success."""
+
+    if "token" in session:
+        user = User.query.filter_by(email=session["token"]).first()
+        print("user", user)
+        return jsonify(user=user)
+    else:
+        return jsonify(msg="not logged in")
+
+
+@app.route('/user/edit', methods=["GET", "POST"])
+def edit_user():
+    """Handle user editing profile.
+
+    redirect to profile page on success."""
