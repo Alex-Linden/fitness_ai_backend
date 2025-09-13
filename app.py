@@ -236,11 +236,84 @@ def me():
     return jsonify(user=user.serialize())
 
 
-@app.route('/user/edit', methods=["GET", "POST"])
-def edit_user():
-    """Handle user editing profile.
 
-    redirect to profile page on success."""
+
+
+@app.patch('/me')
+def update_me():
+    """Update the current user's profile using JWT auth.
+
+    Accepts a JSON body with any subset of fields:
+    - email, first_name, last_name, birthday (YYYY-MM-DD),
+      weight (int), gender (str), benchmarks (JSON object or JSON string),
+      password (min length enforced).
+    Returns the updated user. If the email changes, a new token is returned.
+    """
+    # Auth: ensure caller is the user in token
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return jsonify(message='Missing or invalid Authorization header'), 401
+
+    token = auth_header.split(' ', 1)[1].strip()
+    payload = decode_access_token(token)
+    if payload is None or 'email' not in payload:
+        return jsonify(message='Invalid or expired token'), 401
+
+    user = User.query.filter_by(email=payload['email']).one_or_none()
+    if not user:
+        return jsonify(message='User not found'), 404
+
+    received = request.get_json(silent=True) or {}
+    form = UserEditForm(csrf_enabled=False, data=received)
+    if not form.validate_on_submit():
+        return jsonify(errors=form.errors), 400
+
+    # Track whether email changed to refresh JWT
+    old_email = user.email
+
+    # Update fields if provided
+    if 'email' in received and received['email']:
+        user.email = received['email']
+    if 'first_name' in received and received['first_name']:
+        user.first_name = received['first_name']
+    if 'last_name' in received and received['last_name']:
+        user.last_name = received['last_name']
+    if 'birthday' in received and received['birthday']:
+        # WTForms DateField already parsed; assign from form to ensure coercion
+        user.birthday = form.birthday.data
+    if 'weight' in received and received['weight'] is not None:
+        user.weight = form.weight.data
+    if 'gender' in received and received['gender']:
+        user.gender = received['gender']
+    if 'benchmarks' in received:
+        benchmarks = received['benchmarks']
+        if isinstance(benchmarks, str):
+            try:
+                import json as _json
+                benchmarks = _json.loads(benchmarks)
+            except Exception:
+                benchmarks = None
+        user.benchmarks = benchmarks
+    if 'password' in received and received['password']:
+        # Length validated by form; hash and set
+        from .models import bcrypt as _bcrypt
+        user.password = _bcrypt.generate_password_hash(received['password']).decode('UTF-8')
+
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(message='Email already in use'), 409
+
+    # Issue new token if email changed
+    new_token = None
+    if user.email != old_email:
+        new_token = create_access_token(user.email)
+
+    result = {"user": user.serialize()}
+    if new_token:
+        result["token"] = new_token
+    return jsonify(result)
 
 
 ############################################################

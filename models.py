@@ -52,7 +52,7 @@ class User(UserMixin, db.Model):
             "email": self.email,
             "first_name": self.first_name,
             "last_name": self.last_name,
-            "birthday": self.birthday,
+            "birthday": self.birthday.isoformat() if self.birthday else None,
             "weight": self.weight,
             "gender": self.gender,
             "benchmarks": self.benchmarks,

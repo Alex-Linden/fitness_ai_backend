@@ -33,6 +33,8 @@ class UserEditForm(FlaskForm):
         csrf = False
 
     email = StringField('E-mail', validators=[Optional(), Email()])
+    first_name = StringField('First Name', validators=[Optional()])
+    last_name = StringField('Last Name', validators=[Optional()])
     birthday = DateField('Birthday', validators=[Optional()])
     weight = IntegerField('Weight', validators=[Optional()])
     gender = StringField('Gender', validators=[Optional()])
