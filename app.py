@@ -236,9 +236,6 @@ def me():
     return jsonify(user=user.serialize())
 
 
-
-
-
 @app.patch('/me')
 def update_me():
     """Update the current user's profile using JWT auth.
