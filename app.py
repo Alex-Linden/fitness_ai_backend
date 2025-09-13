@@ -1,19 +1,23 @@
 import os
+from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 from flask_debugtoolbar import DebugToolbarExtension
 
 from flask_login import LoginManager, UserMixin, login_user, logout_user,\
     current_user
 
-from forms import UserAddForm, UserEditForm, LoginForm
-from models import db, connect_db, User, bcrypt
+from .forms import UserAddForm, UserEditForm, LoginForm
+from .models import db, connect_db, User, bcrypt
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import text
 
-from auth import create_access_token, decode_access_token
+from .auth import create_access_token, decode_access_token
 from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
+from flask_migrate import Migrate
 
 
+load_dotenv()
 app = Flask(__name__)
 # Get DB_URI from environ variable (useful for production/testing) or,
 # if not set there, use development local db.
@@ -74,11 +78,14 @@ login_manager = LoginManager()
 connect_db(app)
 bcrypt.init_app(app)
 CORS(
+CORS(
     app,
     resources={r"/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000"]}},
     expose_headers=["Content-Type", "Authorization"],
     supports_credentials=False,
 )
+
+migrate = Migrate(app, db)
 
 
 @app.get('/hello')
@@ -86,6 +93,18 @@ def say_hello():
     """Return simple "Hello" Greeting."""
     html = "<html><body><h1>Hello</h1></body></html>"
     return html
+
+
+@app.get('/health')
+def health():
+    """Basic health check including DB connectivity."""
+    try:
+        db.session.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception:
+        db_ok = False
+    status_code = 200 if db_ok else 503
+    return jsonify(status="ok" if db_ok else "degraded", db="ok" if db_ok else "unavailable"), status_code
 
 
 

@@ -143,6 +143,8 @@ class Activity(db.Model):
 
     complete = db.Column(db.Boolean, nullable=False)
 
+    user = db.relationship('User', backref=db.backref('activities', lazy=True, cascade='all, delete-orphan'))
+
     def serialize(self):
         """Serialize to dictionary"""
 
