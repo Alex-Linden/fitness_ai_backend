@@ -1,13 +1,15 @@
 import os
-import jwt
-from flask import Flask, request, session, jsonify, g
+from flask import Flask, request, jsonify
 from flask_debugtoolbar import DebugToolbarExtension
 
 from flask_login import LoginManager, UserMixin, login_user, logout_user,\
     current_user
 
 from forms import UserAddForm, UserEditForm, LoginForm
-from models import db, connect_db, User
+from models import db, connect_db, User, bcrypt
+from sqlalchemy.exc import IntegrityError
+
+from auth import create_access_token, decode_access_token
 
 
 app = Flask(__name__)
@@ -68,6 +70,7 @@ login_manager = LoginManager()
 
 
 connect_db(app)
+bcrypt.init_app(app)
 
 
 @app.get('/hello')
@@ -84,9 +87,8 @@ def say_hello():
 
 
 
-@app.route('/signup', methods=["GET", "POST"])
+@app.route('/signup', methods=["POST"])
 def signup():
-    print('signup route')
     """Handle user signup.
 
     Create new user and add to DB. Redirect to home page.
@@ -97,99 +99,97 @@ def signup():
     and re-present form.
     """
 
-    # if CURR_USER_KEY in session:
-    #     del session[CURR_USER_KEY]
-    received = request.json
-    print('received', received)
+    received = request.get_json(silent=True) or {}
     form = UserAddForm(csrf_enabled=False, data=received)
-    print('form=', form)
-    print("username", received["username"])
-    print('password', received["password"])
 
-    if form.validate_on_submit():
-        username = received["username"]
-        password = received["password"]
-        email = received["email"]
-        first_name = received["first_name"]
-        last_name = received["last_name"]
-        bio = received["bio"]
-        is_host = False
-        print("username", username)
+    if not form.validate_on_submit():
+        return jsonify(errors=form.errors), 400
 
+    email = received.get("email")
+    password = received.get("password")
+    first_name = received.get("first_name")
+    last_name = received.get("last_name")
+    birthday = received.get("birthday")
+    weight = received.get("weight")
+    gender = received.get("gender")
+    benchmarks = received.get("benchmarks")
+
+    # Accept benchmarks as JSON or string
+    if isinstance(benchmarks, str):
         try:
-            user = User.signup(
-                username=username,
-                password=password,
-                email=email,
-                first_name=first_name,
-                last_name=last_name,
-                bio=bio,
-                is_host=is_host,
-                # image_url=form.image_url.data or User.image_url.default.arg,
-            )
-            db.session.commit()
+            import json as _json
+            benchmarks = _json.loads(benchmarks)
+        except Exception:
+            benchmarks = None
 
-            serialized = user[0].serialize()
+    try:
+        user = User.signup(
+            email=email,
+            password=password,
+            first_name=first_name,
+            last_name=last_name,
+            birthday=birthday,
+            weight=weight,
+            gender=gender,
+            benchmarks=benchmarks,
+        )
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(message="Email already registered"), 409
 
-            return jsonify(user=serialized, token=user[1])
-
-        except ClientError as e:
-            #TODO: default image
-            return jsonify(e)
-
-    return jsonify(errors=form.errors)
+    token = create_access_token(email)
+    return jsonify(user=user.serialize(), token=token), 201
 
 
-@app.route('/login', methods=["GET", "POST"])
+@app.route('/login', methods=["POST"])
 def login():
     """Handle user login and redirect to homepage on success."""
 
-    received = request.json
+    received = request.get_json(silent=True) or {}
     form = LoginForm(csrf_enabled=False, data=received)
 
-    if form.validate_on_submit():
-        username = received["username"]
-        password = received["password"]
+    if not form.validate_on_submit():
+        return jsonify(errors=form.errors), 400
 
-        user = User.authenticate(
-            username,
-            password)
+    email = received.get("email")
+    password = received.get("password")
 
-        if user[0]:
-            serialized = user[0].serialize()
+    user = User.authenticate(email, password)
 
-            return jsonify(user=serialized, token=user[1])
-        else:
-            return jsonify({"msg": 'failed to login username or password is invalid'})
+    if not user:
+        return jsonify(message='Invalid email or password'), 401
 
-
-    return jsonify(errors=form.errors)
+    token = create_access_token(email)
+    return jsonify(user=user.serialize(), token=token)
 
 
-@app.route('/logout', methods=["GET", "POST"])
+@app.route('/logout', methods=["POST"])
 def logout():
-    """Handle user logout and redirect to homepage on success."""
-
-    if "token" in session:
-        del session["token"]
-        return jsonify(msg="logged out")
-    else:
-        return jsonify(msg="not logged in")
+    """Stateless JWT: client drops token; nothing to do server-side."""
+    return jsonify(message="logged out")
 
 ############################################################
 # General User routes - TODO: this was vibe coded don't trust
 
 
-@app.route('/user', methods=["GET", "POST"])
-def user():
-    """Handle user logout and redirect to homepage on success."""
+@app.get('/me')
+def me():
+    """Return the current user's profile using JWT from Authorization header."""
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return jsonify(message='Missing or invalid Authorization header'), 401
 
-    if "token" in session:
-        user = User.query.filter_by(email=session["token"]).first()
-        print("user", user)
-        return jsonify(user=user)
-    else:
-        return jsonify(msg="not logged in")
+    token = auth_header.split(' ', 1)[1].strip()
+    payload = decode_access_token(token)
+    if payload is None or 'email' not in payload:
+        return jsonify(message='Invalid or expired token'), 401
+
+    user = User.query.filter_by(email=payload['email']).one_or_none()
+    if not user:
+        return jsonify(message='User not found'), 404
+
+    return jsonify(user=user.serialize())
 
 
 @app.route('/user/edit', methods=["GET", "POST"])

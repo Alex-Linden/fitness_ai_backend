@@ -1,16 +1,8 @@
 """SQLAlchemy models for fitness_ai."""
-from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
-from dotenv import load_dotenv
 from flask_login import UserMixin
-import os
-import jwt
-
 from flask_bcrypt import Bcrypt
 
-load_dotenv()
-
-secret_key = os.environ["SECRET_KEY"]
 bcrypt = Bcrypt()
 db = SQLAlchemy()
 
@@ -73,18 +65,16 @@ class User(UserMixin, db.Model):
         password,
         first_name,
         last_name,
-        birthday,
-        weight,
-        gender,
-        benchmarks,
+        birthday=None,
+        weight=None,
+        gender=None,
+        benchmarks=None,
     ):
         """Sign up user.
 
         Hashes password and adds user to system.
         """
-        print("password", password)
         hashed_pwd = bcrypt.generate_password_hash(password).decode("UTF-8")
-        print("hashed", hashed_pwd)
         user = User(
             email=email,
             password=hashed_pwd,
@@ -95,10 +85,8 @@ class User(UserMixin, db.Model):
             gender=gender,
             benchmarks=benchmarks,
         )
-        token = jwt.encode({"email": email}, secret_key)
-
         db.session.add(user)
-        return [user, token]
+        return user
 
     @classmethod
     def authenticate(cls, email, password):
@@ -114,21 +102,11 @@ class User(UserMixin, db.Model):
 
         user = cls.query.filter_by(email=email).one_or_none()
 
-        if user:
-            is_auth = bcrypt.check_password_hash(user.password, password)
-            if is_auth:
-                token = jwt.encode({"email": email}, secret_key)
-                return [user, token]
+        if user and bcrypt.check_password_hash(user.password, password):
+            return user
 
         return False
 
-    @classmethod
-    def create_token(cls, email):
-        """Create token for user"""
-        print("create_token")
-        print("secret key", secret_key)
-        token = jwt({"email": email}, secret_key)
-        return token
 
 
 class Activity(db.Model):
