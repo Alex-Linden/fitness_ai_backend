@@ -7,14 +7,20 @@ from flask_debugtoolbar import DebugToolbarExtension
 from flask_login import LoginManager, UserMixin, login_user, logout_user,\
     current_user
 
-from .forms import UserAddForm, UserEditForm, LoginForm, PasswordChangeForm
+from .forms import (
+    UserAddForm,
+    UserEditForm,
+    LoginForm,
+    PasswordChangeForm,
+    DeleteAccountForm,
+)
 from .models import db, connect_db, User, bcrypt, PasswordChangeLog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
 from datetime import datetime, timedelta
 from sqlalchemy import text
 
-from .auth import create_access_token, decode_access_token
+from .auth import create_access_token, decode_access_token, jwt_required, json_form_required
 from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
 from flask_migrate import Migrate
@@ -134,6 +140,7 @@ def health():
 
 
 @app.route('/signup', methods=["POST"])
+@json_form_required(UserAddForm)
 def signup():
     """Handle user signup.
 
@@ -145,11 +152,9 @@ def signup():
     and re-present form.
     """
 
-    received = request.get_json(silent=True) or {}
-    form = UserAddForm(csrf_enabled=False, data=received)
-
-    if not form.validate_on_submit():
-        return jsonify(errors=form.errors), 400
+    from flask import g
+    received = g.json
+    form = g.form
 
     email = received.get("email")
     password = received.get("password")
@@ -189,14 +194,13 @@ def signup():
 
 
 @app.route('/login', methods=["POST"])
+@json_form_required(LoginForm)
 def login():
     """Handle user login and redirect to homepage on success."""
 
-    received = request.get_json(silent=True) or {}
-    form = LoginForm(csrf_enabled=False, data=received)
-
-    if not form.validate_on_submit():
-        return jsonify(errors=form.errors), 400
+    from flask import g
+    received = g.json
+    form = g.form
 
     email = received.get("email")
     password = received.get("password")
@@ -220,25 +224,15 @@ def logout():
 
 
 @app.get('/me')
+@jwt_required
 def me():
-    """Return the current user's profile using JWT from Authorization header."""
-    auth_header = request.headers.get('Authorization', '')
-    if not auth_header.startswith('Bearer '):
-        return jsonify(message='Missing or invalid Authorization header'), 401
-
-    token = auth_header.split(' ', 1)[1].strip()
-    payload = decode_access_token(token)
-    if payload is None or 'email' not in payload:
-        return jsonify(message='Invalid or expired token'), 401
-
-    user = User.query.filter_by(email=payload['email']).one_or_none()
-    if not user:
-        return jsonify(message='User not found'), 404
-
-    return jsonify(user=user.serialize())
+    from flask import g
+    return jsonify(user=g.current_user.serialize())
 
 
 @app.patch('/me')
+@jwt_required
+@json_form_required(UserEditForm)
 def update_me():
     """Update the current user's profile using JWT auth.
 
@@ -248,24 +242,10 @@ def update_me():
       password (min length enforced).
     Returns the updated user. If the email changes, a new token is returned.
     """
-    # Auth: ensure caller is the user in token
-    auth_header = request.headers.get('Authorization', '')
-    if not auth_header.startswith('Bearer '):
-        return jsonify(message='Missing or invalid Authorization header'), 401
-
-    token = auth_header.split(' ', 1)[1].strip()
-    payload = decode_access_token(token)
-    if payload is None or 'email' not in payload:
-        return jsonify(message='Invalid or expired token'), 401
-
-    user = User.query.filter_by(email=payload['email']).one_or_none()
-    if not user:
-        return jsonify(message='User not found'), 404
-
-    received = request.get_json(silent=True) or {}
-    form = UserEditForm(csrf_enabled=False, data=received)
-    if not form.validate_on_submit():
-        return jsonify(errors=form.errors), 400
+    from flask import g
+    user = g.current_user
+    received = g.json
+    form = g.form
 
     # Track whether email changed to refresh JWT
     old_email = user.email
@@ -316,29 +296,18 @@ def update_me():
 
 
 @app.patch('/me/password')
+@jwt_required
+@json_form_required(PasswordChangeForm)
 def change_password():
     """Change the current user's password.
 
     Requires JWT auth and validates the current password.
     Body: {"current_password": str, "new_password": str (min 6)}
     """
-    auth_header = request.headers.get('Authorization', '')
-    if not auth_header.startswith('Bearer '):
-        return jsonify(message='Missing or invalid Authorization header'), 401
-
-    token = auth_header.split(' ', 1)[1].strip()
-    payload = decode_access_token(token)
-    if payload is None or 'email' not in payload:
-        return jsonify(message='Invalid or expired token'), 401
-
-    user = User.query.filter_by(email=payload['email']).one_or_none()
-    if not user:
-        return jsonify(message='User not found'), 404
-
-    received = request.get_json(silent=True) or {}
-    form = PasswordChangeForm(csrf_enabled=False, data=received)
-    if not form.validate_on_submit():
-        return jsonify(errors=form.errors), 400
+    from flask import g
+    user = g.current_user
+    received = g.json
+    form = g.form
 
     current_password = received.get('current_password')
     new_password = received.get('new_password')
@@ -370,6 +339,35 @@ def change_password():
     db.session.commit()
 
     return jsonify(message='Password updated successfully')
+
+
+@app.delete('/me')
+@jwt_required
+@json_form_required(DeleteAccountForm)
+def delete_me():
+    """Delete the current user's account with validation.
+
+    Requirements:
+    - JWT auth
+    - Body must include current_password and confirm_email matching the user's email
+    """
+    from flask import g
+    user = g.current_user
+    received = g.json
+
+    current_password = received.get('current_password')
+    confirm_email = received.get('confirm_email')
+
+    if confirm_email != user.email:
+        return jsonify(message='Confirmation email does not match'), 400
+
+    if not bcrypt.check_password_hash(user.password, current_password):
+        return jsonify(message='Current password is incorrect'), 401
+
+    db.session.delete(user)
+    db.session.commit()
+
+    return jsonify(message='Account deleted'), 200
 
 
 ############################################################

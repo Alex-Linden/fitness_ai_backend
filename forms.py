@@ -60,3 +60,13 @@ class PasswordChangeForm(FlaskForm):
 
     current_password = PasswordField('Current Password', validators=[DataRequired()])
     new_password = PasswordField('New Password', validators=[Length(min=6)])
+
+
+class DeleteAccountForm(FlaskForm):
+    """Form for deleting a user's account."""
+
+    class Meta:
+        csrf = False
+
+    current_password = PasswordField('Current Password', validators=[DataRequired()])
+    confirm_email = StringField('Confirm Email', validators=[DataRequired(), Email()])
