@@ -16,8 +16,8 @@ A personal project built using Flask to create a web application for generating 
      - `cp .env.example .env`
    - Key variables:
      - `SECRET_KEY` — any strong random string
-     - `DATABASE_URL` — Postgres DSN, e.g. `postgresql://USER:PASSWORD@localhost:5432/fitness_ai`
-       - If using older `postgres://` DSN, it is auto-upgraded to `postgresql://`.
+     - `DATABASE_URL` — Postgres DSN using psycopg3, e.g. `postgresql+psycopg://USER:PASSWORD@localhost:5432/fitness_ai`
+       - If using older `postgres://` DSN, the app upgrades it to `postgresql+psycopg://` automatically.
      - Optional OAuth keys (Google/GitHub/Strava) can remain empty for now.
 
 4. Initialize the database (Flask-Migrate):
@@ -27,4 +27,4 @@ A personal project built using Flask to create a web application for generating 
    - `flask db upgrade`
 
 5. Run the app:
-   - `flask run`
+   - `flask run` (port is set via `.env` to 5001)

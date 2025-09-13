@@ -1,5 +1,6 @@
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
+from pathlib import Path
 from flask import Flask, request, jsonify
 from flask_debugtoolbar import DebugToolbarExtension
 
@@ -17,16 +18,33 @@ from werkzeug.exceptions import HTTPException
 from flask_migrate import Migrate
 
 
-load_dotenv()
+# Load env from backend/.env first (works regardless of CWD),
+# then also load a repo-level .env if present.
+_backend_dir = Path(__file__).resolve().parent
+load_dotenv(_backend_dir / ".env")
+load_dotenv(find_dotenv())
 app = Flask(__name__)
 # Get DB_URI from environ variable (useful for production/testing) or,
 # if not set there, use development local db.
-app.config['SQLALCHEMY_DATABASE_URI'] = (
-    os.environ['DATABASE_URL'].replace("postgres://", "postgresql://"))
+db_url = os.getenv('DATABASE_URL')
+if not db_url:
+    raise RuntimeError(
+        "DATABASE_URL is not set. Create a .env from .env.example and set DATABASE_URL"
+    )
+if db_url.startswith('postgres://'):
+    db_url = db_url.replace('postgres://', 'postgresql+psycopg://', 1)
+elif db_url.startswith('postgresql://') and '+psycopg' not in db_url:
+    db_url = db_url.replace('postgresql://', 'postgresql+psycopg://', 1)
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ECHO'] = False
 app.config['DEBUG_TB_INTERCEPT_REDIRECTS'] = True
-app.config['SECRET_KEY'] = os.environ['SECRET_KEY']
+secret_key = os.getenv('SECRET_KEY')
+if not secret_key:
+    raise RuntimeError(
+        "SECRET_KEY is not set. Create a .env from .env.example and set SECRET_KEY"
+    )
+app.config['SECRET_KEY'] = secret_key
 # From blog/tutorial TODO: register app with OAuth2Client and update secret keys
 app.config['OAUTH2_PROVIDERS'] = {
     # Google OAuth 2.0 documentation:
@@ -77,7 +95,6 @@ login_manager = LoginManager()
 
 connect_db(app)
 bcrypt.init_app(app)
-CORS(
 CORS(
     app,
     resources={r"/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000"]}},
