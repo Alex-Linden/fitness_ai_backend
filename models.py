@@ -145,6 +145,25 @@ class Activity(db.Model):
 
     user = db.relationship('User', backref=db.backref('activities', lazy=True, cascade='all, delete-orphan'))
 
+
+class PasswordChangeLog(db.Model):
+    """Audit log for password change attempts."""
+
+    __tablename__ = "password_change_logs"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    ip = db.Column(db.String(45), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
+    success = db.Column(db.Boolean, nullable=False)
+
+    user = db.relationship('User', backref=db.backref('password_change_logs', lazy=True, cascade='all, delete-orphan'))
+
     def serialize(self):
         """Serialize to dictionary"""
 

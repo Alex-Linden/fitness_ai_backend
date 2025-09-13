@@ -7,9 +7,11 @@ from flask_debugtoolbar import DebugToolbarExtension
 from flask_login import LoginManager, UserMixin, login_user, logout_user,\
     current_user
 
-from .forms import UserAddForm, UserEditForm, LoginForm
-from .models import db, connect_db, User, bcrypt
+from .forms import UserAddForm, UserEditForm, LoginForm, PasswordChangeForm
+from .models import db, connect_db, User, bcrypt, PasswordChangeLog
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func
+from datetime import datetime, timedelta
 from sqlalchemy import text
 
 from .auth import create_access_token, decode_access_token
@@ -313,6 +315,63 @@ def update_me():
     return jsonify(result)
 
 
+@app.patch('/me/password')
+def change_password():
+    """Change the current user's password.
+
+    Requires JWT auth and validates the current password.
+    Body: {"current_password": str, "new_password": str (min 6)}
+    """
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return jsonify(message='Missing or invalid Authorization header'), 401
+
+    token = auth_header.split(' ', 1)[1].strip()
+    payload = decode_access_token(token)
+    if payload is None or 'email' not in payload:
+        return jsonify(message='Invalid or expired token'), 401
+
+    user = User.query.filter_by(email=payload['email']).one_or_none()
+    if not user:
+        return jsonify(message='User not found'), 404
+
+    received = request.get_json(silent=True) or {}
+    form = PasswordChangeForm(csrf_enabled=False, data=received)
+    if not form.validate_on_submit():
+        return jsonify(errors=form.errors), 400
+
+    current_password = received.get('current_password')
+    new_password = received.get('new_password')
+
+    # Rate limit failed attempts: 5 failures per 15 minutes
+    window = datetime.utcnow() - timedelta(minutes=15)
+    failed_count = db.session.query(func.count(PasswordChangeLog.id)).filter(
+        PasswordChangeLog.user_id == user.id,
+        PasswordChangeLog.success.is_(False),
+        PasswordChangeLog.created_at >= window,
+    ).scalar() or 0
+    if failed_count >= 5:
+        return jsonify(message='Too many failed attempts. Try again in 15 minutes'), 429
+
+    # Verify current password
+    if not bcrypt.check_password_hash(user.password, current_password):
+        log = PasswordChangeLog(user_id=user.id, ip=request.remote_addr, success=False)
+        db.session.add(log)
+        db.session.commit()
+        return jsonify(message='Current password is incorrect'), 401
+
+    # Optional: prevent reusing the same password
+    if bcrypt.check_password_hash(user.password, new_password):
+        return jsonify(message='New password must be different from current password'), 400
+
+    user.password = bcrypt.generate_password_hash(new_password).decode('UTF-8')
+    log = PasswordChangeLog(user_id=user.id, ip=request.remote_addr, success=True)
+    db.session.add(log)
+    db.session.commit()
+
+    return jsonify(message='Password updated successfully')
+
+
 ############################################################
 # Error Handlers
 
@@ -358,6 +417,12 @@ def method_not_allowed(err):
 def unprocessable_entity(err):
     msg = err.description if isinstance(err, HTTPException) else "Unprocessable Entity"
     return _json_error(422, msg)
+
+
+@app.errorhandler(429)
+def too_many_requests(err):
+    msg = err.description if isinstance(err, HTTPException) else "Too Many Requests"
+    return _json_error(429, msg)
 
 
 @app.errorhandler(Exception)

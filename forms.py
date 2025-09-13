@@ -50,3 +50,13 @@ class LoginForm(FlaskForm):
 
     email = StringField('E-mail', validators=[DataRequired(), Email()])
     password = PasswordField('Password', validators=[Length(min=6)])
+
+
+class PasswordChangeForm(FlaskForm):
+    """Form for changing a user's password."""
+
+    class Meta:
+        csrf = False
+
+    current_password = PasswordField('Current Password', validators=[DataRequired()])
+    new_password = PasswordField('New Password', validators=[Length(min=6)])
