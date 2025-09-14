@@ -559,3 +559,15 @@ def internal_error(err):
     # Log unexpected exceptions and return generic JSON error
     app.logger.exception("Unhandled exception")
     return _json_error(500, "Internal Server Error")
+
+
+############################################################
+# Flask CLI Commands
+
+
+@app.cli.command("seed")
+def seed_command():
+    """Seed database with sample users, categories, and activities."""
+    # Lazy import to avoid circular import at module load
+    from .seed import main as _seed_main
+    _seed_main()

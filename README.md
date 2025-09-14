@@ -28,3 +28,15 @@ A personal project built using Flask to create a web application for generating 
 
 5. Run the app:
    - `flask run` (port is set via `.env` to 5001)
+
+## Seeding sample data
+
+Populate categories, users, and activities for local testing:
+
+- Option A: `flask seed`
+- Option B: `python backend/seed.py`
+
+This creates two users with password `password123` and prints ready-to-use JWTs for Insomnia:
+
+- `test.user1@example.com` — includes a Morning Run and Evening Yoga
+- `john.doe@example.com` — includes a Lunch Ride and Pool Swim
