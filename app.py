@@ -13,8 +13,9 @@ from .forms import (
     LoginForm,
     PasswordChangeForm,
     DeleteAccountForm,
+    ActivityForm,
 )
-from .models import db, connect_db, User, bcrypt, PasswordChangeLog
+from .models import db, connect_db, User, bcrypt, PasswordChangeLog, Activity, ActivityCategory
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
 from datetime import datetime, timedelta
@@ -369,6 +370,80 @@ def delete_me():
 
     return jsonify(message='Account deleted'), 200
 
+
+############################################################
+# Activity routes
+
+
+@app.post('/me/activities')
+@jwt_required
+@json_form_required(ActivityForm)
+def log_activity():
+    """Create a new activity for the current user.
+
+    Body JSON fields:
+    - title (str, <=20), category (str, <=20), distance (float, >=0),
+      duration (HH:MM:SS), time (HH:MM:SS), notes (optional str),
+      complete (optional bool)
+    Returns the created activity as JSON.
+    """
+    from flask import g
+    user = g.current_user
+    form = g.form
+
+    # Resolve category via id or name
+    cat_obj = None
+    if form.category_id.data:
+        cat_obj = ActivityCategory.query.get(form.category_id.data)
+        if not cat_obj:
+            return jsonify(message='Category not found'), 400
+    elif form.category.data:
+        name = form.category.data.strip()
+        cat_obj = ActivityCategory.query.filter(func.lower(ActivityCategory.name) == name.lower()).one_or_none()
+        if not cat_obj:
+            return jsonify(message='Category not found'), 400
+    else:
+        return jsonify(message='category_id or category is required'), 400
+
+    activity = Activity(
+        title=form.title.data,
+        distance=form.distance.data,
+        duration=form.duration.data,
+        notes=form.notes.data or None,
+        user_id=user.id,
+        time=form.time.data,
+        complete=bool(form.complete.data),
+        category_id=cat_obj.id,
+    )
+
+    db.session.add(activity)
+    db.session.commit()
+
+    payload = {
+        "id": activity.id,
+        "title": activity.title,
+        "category_id": activity.category_id,
+        "category": activity.category.name if activity.category else None,
+        "distance": activity.distance,
+        "duration": activity.duration.isoformat() if activity.duration else None,
+        "notes": activity.notes,
+        "user_id": activity.user_id,
+        "time": activity.time.isoformat() if activity.time else None,
+        "complete": activity.complete,
+    }
+
+    return jsonify(activity=payload), 201
+
+
+@app.get('/activity-categories')
+def list_activity_categories():
+    """List available activity categories. Optional ?q= filter by name."""
+    q = request.args.get('q', type=str)
+    query = ActivityCategory.query
+    if q:
+        query = query.filter(ActivityCategory.name.ilike(f"%{q}%"))
+    cats = query.order_by(ActivityCategory.name.asc()).all()
+    return jsonify(categories=[c.serialize() for c in cats])
 
 ############################################################
 # Error Handlers

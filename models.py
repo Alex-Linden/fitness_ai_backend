@@ -125,8 +125,6 @@ class Activity(db.Model):
         nullable=False,
     )
 
-    category = db.Column(db.String(20), nullable=False)
-
     distance = db.Column(db.Float, nullable=False)
 
     duration = db.Column(db.Time, nullable=False)
@@ -144,6 +142,15 @@ class Activity(db.Model):
     complete = db.Column(db.Boolean, nullable=False)
 
     user = db.relationship('User', backref=db.backref('activities', lazy=True, cascade='all, delete-orphan'))
+
+    # New FK to normalized category table
+    category_id = db.Column(
+        db.Integer,
+        db.ForeignKey("activity_categories.id"),
+        nullable=False,
+        index=True,
+    )
+    category = db.relationship('ActivityCategory', backref=db.backref('activities', lazy=True))
 
 
 class PasswordChangeLog(db.Model):
@@ -165,18 +172,14 @@ class PasswordChangeLog(db.Model):
     user = db.relationship('User', backref=db.backref('password_change_logs', lazy=True, cascade='all, delete-orphan'))
 
     def serialize(self):
-        """Serialize to dictionary"""
+        """Serialize to dictionary for audit viewing."""
 
         return {
             "id": self.id,
-            "title": self.title,
-            "Category": self.category,
-            "Duration": self.duration,
-            "Distance": self.distance,
-            "Notes": self.notes,
-            "User": self.user_id,
-            "Time": self.time,
-            "Completed": self.complete,
+            "user_id": self.user_id,
+            "ip": self.ip,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "success": self.success,
         }
 
 
@@ -188,3 +191,15 @@ def connect_db(app):
 
     db.app = app
     db.init_app(app)
+
+
+class ActivityCategory(db.Model):
+    """Lookup for activity categories/types (e.g., Run, Bike)."""
+
+    __tablename__ = "activity_categories"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    name = db.Column(db.String(50), nullable=False, unique=True, index=True)
+
+    def serialize(self):
+        return {"id": self.id, "name": self.name}

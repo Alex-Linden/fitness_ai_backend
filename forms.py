@@ -1,7 +1,17 @@
 from wsgiref.validate import validator
 from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, TextAreaField, IntegerField, BooleanField, FileField, DateField
-from wtforms.validators import DataRequired, InputRequired, Email, Length, Optional
+from wtforms import (
+    StringField,
+    PasswordField,
+    TextAreaField,
+    IntegerField,
+    BooleanField,
+    FileField,
+    DateField,
+    TimeField,
+    FloatField,
+)
+from wtforms.validators import DataRequired, InputRequired, Email, Length, Optional, NumberRange
 
 
 # class MessageForm(FlaskForm):
@@ -70,3 +80,21 @@ class DeleteAccountForm(FlaskForm):
 
     current_password = PasswordField('Current Password', validators=[DataRequired()])
     confirm_email = StringField('Confirm Email', validators=[DataRequired(), Email()])
+
+
+class ActivityForm(FlaskForm):
+    """Form for logging an activity."""
+
+    class Meta:
+        csrf = False
+
+    title = StringField('Title', validators=[DataRequired(), Length(max=20)])
+    # Allow either category_id or category name to be supplied; enforce in route
+    category_id = IntegerField('Category ID', validators=[Optional()])
+    category = StringField('Category', validators=[Optional(), Length(max=50)])
+    distance = FloatField('Distance', validators=[InputRequired(), NumberRange(min=0)])
+    # Expect HH:MM:SS for both
+    duration = TimeField('Duration', format='%H:%M:%S', validators=[DataRequired()])
+    time = TimeField('Time', format='%H:%M:%S', validators=[DataRequired()])
+    notes = TextAreaField('Notes', validators=[Optional()])
+    complete = BooleanField('Complete', validators=[Optional()])
