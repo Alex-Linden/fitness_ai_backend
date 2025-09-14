@@ -98,3 +98,19 @@ class ActivityForm(FlaskForm):
     time = TimeField('Time', format='%H:%M:%S', validators=[DataRequired()])
     notes = TextAreaField('Notes', validators=[Optional()])
     complete = BooleanField('Complete', validators=[Optional()])
+
+
+class ActivityUpdateForm(FlaskForm):
+    """Form for updating an activity (all fields optional)."""
+
+    class Meta:
+        csrf = False
+
+    title = StringField('Title', validators=[Optional(), Length(max=20)])
+    category_id = IntegerField('Category ID', validators=[Optional()])
+    category = StringField('Category', validators=[Optional(), Length(max=50)])
+    distance = FloatField('Distance', validators=[Optional(), NumberRange(min=0)])
+    duration = TimeField('Duration', format='%H:%M:%S', validators=[Optional()])
+    time = TimeField('Time', format='%H:%M:%S', validators=[Optional()])
+    notes = TextAreaField('Notes', validators=[Optional()])
+    complete = BooleanField('Complete', validators=[Optional()])

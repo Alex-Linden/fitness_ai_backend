@@ -14,6 +14,7 @@ from .forms import (
     PasswordChangeForm,
     DeleteAccountForm,
     ActivityForm,
+    ActivityUpdateForm,
 )
 from .models import db, connect_db, User, bcrypt, PasswordChangeLog, Activity, ActivityCategory
 from sqlalchemy.exc import IntegrityError
@@ -559,6 +560,84 @@ def delete_my_activity(activity_id: int):
     db.session.delete(activity)
     db.session.commit()
     return "", 204
+
+
+@app.patch('/me/activities/<int:activity_id>')
+@jwt_required
+@json_form_required(ActivityUpdateForm)
+def update_my_activity(activity_id: int):
+    """Update an activity owned by the current user.
+
+    Accepts any subset of fields from the activity creation payload.
+    Category may be updated via category_id or category name.
+    """
+    from flask import g
+    user = g.current_user
+    received = g.json
+    form = g.form
+
+    activity = Activity.query.filter(
+        Activity.id == activity_id, Activity.user_id == user.id
+    ).one_or_none()
+    if not activity:
+        return jsonify(message="Activity not found"), 404
+
+    # Title
+    if 'title' in received and received['title'] is not None:
+        activity.title = form.title.data
+
+    # Category resolution
+    if 'category_id' in received or 'category' in received:
+        cat_obj = None
+        if 'category_id' in received and received['category_id'] is not None:
+            cat_obj = ActivityCategory.query.get(form.category_id.data)
+            if not cat_obj:
+                return jsonify(message='Category not found'), 400
+        elif 'category' in received and received['category']:
+            name = form.category.data.strip()
+            cat_obj = ActivityCategory.query.filter(
+                func.lower(ActivityCategory.name) == name.lower()
+            ).one_or_none()
+            if not cat_obj:
+                return jsonify(message='Category not found'), 400
+        if cat_obj:
+            activity.category_id = cat_obj.id
+
+    # Distance
+    if 'distance' in received and received['distance'] is not None:
+        activity.distance = form.distance.data
+
+    # Duration
+    if 'duration' in received and received['duration']:
+        activity.duration = form.duration.data
+
+    # Time
+    if 'time' in received and received['time']:
+        activity.time = form.time.data
+
+    # Notes
+    if 'notes' in received:
+        activity.notes = received['notes'] or None
+
+    # Complete
+    if 'complete' in received:
+        activity.complete = bool(form.complete.data)
+
+    db.session.commit()
+
+    payload = {
+        "id": activity.id,
+        "title": activity.title,
+        "category_id": activity.category_id,
+        "category": activity.category.name if activity.category else None,
+        "distance": activity.distance,
+        "duration": activity.duration.isoformat() if activity.duration else None,
+        "notes": activity.notes,
+        "user_id": activity.user_id,
+        "time": activity.time.isoformat() if activity.time else None,
+        "complete": activity.complete,
+    }
+    return jsonify(activity=payload)
 
 
 
