@@ -445,6 +445,58 @@ def list_activity_categories():
     cats = query.order_by(ActivityCategory.name.asc()).all()
     return jsonify(categories=[c.serialize() for c in cats])
 
+
+@app.get('/me/activities')
+@jwt_required
+def list_my_activities():
+    """List activities for the current user.
+
+    Optional query params:
+    - category_id: int
+    - complete: bool (true/false)
+    - limit: int (default 50, max 100)
+    - offset: int (default 0)
+    """
+    from flask import g
+    user = g.current_user
+
+    q = Activity.query.filter(Activity.user_id == user.id)
+
+    category_id = request.args.get('category_id', type=int)
+    if category_id is not None:
+        q = q.filter(Activity.category_id == category_id)
+
+    complete_param = request.args.get('complete')
+    if complete_param is not None:
+        val = complete_param.strip().lower()
+        if val in ('true', '1', 'yes'):
+            q = q.filter(Activity.complete.is_(True))
+        elif val in ('false', '0', 'no'):
+            q = q.filter(Activity.complete.is_(False))
+
+    limit = request.args.get('limit', default=50, type=int)
+    offset = request.args.get('offset', default=0, type=int)
+    limit = max(1, min(100, limit or 50))
+    offset = max(0, offset or 0)
+
+    activities = q.order_by(Activity.id.desc()).offset(offset).limit(limit).all()
+
+    def _act_payload(a: Activity):
+        return {
+            "id": a.id,
+            "title": a.title,
+            "category_id": a.category_id,
+            "category": a.category.name if a.category else None,
+            "distance": a.distance,
+            "duration": a.duration.isoformat() if a.duration else None,
+            "notes": a.notes,
+            "user_id": a.user_id,
+            "time": a.time.isoformat() if a.time else None,
+            "complete": a.complete,
+        }
+
+    return jsonify(activities=[_act_payload(a) for a in activities], count=len(activities))
+
 ############################################################
 # Error Handlers
 
