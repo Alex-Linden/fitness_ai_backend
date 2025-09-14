@@ -497,6 +497,71 @@ def list_my_activities():
 
     return jsonify(activities=[_act_payload(a) for a in activities], count=len(activities))
 
+
+@app.get('/me/activities/<int:activity_id>')
+@jwt_required
+def get_my_activity(activity_id: int):
+    """Get a single activity owned by the current user."""
+    from flask import g
+    user = g.current_user
+    a = (
+        Activity.query
+        .filter(Activity.id == activity_id, Activity.user_id == user.id)
+        .one_or_none()
+    )
+    if not a:
+        return jsonify(message="Activity not found"), 404
+    payload = {
+        "id": a.id,
+        "title": a.title,
+        "category_id": a.category_id,
+        "category": a.category.name if a.category else None,
+        "distance": a.distance,
+        "duration": a.duration.isoformat() if a.duration else None,
+        "notes": a.notes,
+        "user_id": a.user_id,
+        "time": a.time.isoformat() if a.time else None,
+        "complete": a.complete,
+    }
+    return jsonify(activity=payload)
+
+
+@app.route("/api/activities/<int:activity_id>", methods=["DELETE"])  # legacy path
+@jwt_required
+def delete_activity(activity_id: int):
+    """Delete one of the current user's activities by ID.
+
+    Legacy path kept for compatibility; use /me/activities/<id> instead.
+    """
+    from flask import g
+    user = g.current_user
+    activity = Activity.query.filter(
+        Activity.id == activity_id, Activity.user_id == user.id
+    ).one_or_none()
+    if not activity:
+        return jsonify(message="Activity not found"), 404
+    db.session.delete(activity)
+    db.session.commit()
+    return "", 204
+
+
+@app.delete('/me/activities/<int:activity_id>')
+@jwt_required
+def delete_my_activity(activity_id: int):
+    """Preferred route: delete an activity owned by the current user."""
+    from flask import g
+    user = g.current_user
+    activity = Activity.query.filter(
+        Activity.id == activity_id, Activity.user_id == user.id
+    ).one_or_none()
+    if not activity:
+        return jsonify(message="Activity not found"), 404
+    db.session.delete(activity)
+    db.session.commit()
+    return "", 204
+
+
+
 ############################################################
 # Error Handlers
 
