@@ -1,31 +1,14 @@
 import os
 from dotenv import load_dotenv, find_dotenv
 from pathlib import Path
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify
 from flask_debugtoolbar import DebugToolbarExtension
-
-from flask_login import LoginManager, UserMixin, login_user, logout_user,\
-    current_user
-
-from .forms import (
-    UserAddForm,
-    UserEditForm,
-    LoginForm,
-    PasswordChangeForm,
-    DeleteAccountForm,
-    ActivityForm,
-    ActivityUpdateForm,
-)
-from .models import db, connect_db, User, bcrypt, PasswordChangeLog, Activity, ActivityCategory
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy import func
-from datetime import datetime, timedelta
+from flask_login import LoginManager
+from flask_cors import CORS
+from flask_migrate import Migrate
 from sqlalchemy import text
 
-from .auth import create_access_token, decode_access_token, jwt_required, json_form_required
-from flask_cors import CORS
-from werkzeug.exceptions import HTTPException
-from flask_migrate import Migrate
+from .models import db, connect_db, bcrypt
 
 
 # Load env from backend/.env first (works regardless of CWD),
@@ -34,8 +17,8 @@ _backend_dir = Path(__file__).resolve().parent
 load_dotenv(_backend_dir / ".env")
 load_dotenv(find_dotenv())
 app = Flask(__name__)
-# Get DB_URI from environ variable (useful for production/testing) or,
-# if not set there, use development local db.
+
+# Database configuration
 db_url = os.getenv('DATABASE_URL')
 if not db_url:
     raise RuntimeError(
@@ -49,16 +32,17 @@ app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ECHO'] = False
 app.config['DEBUG_TB_INTERCEPT_REDIRECTS'] = True
+
+# Secrets
 secret_key = os.getenv('SECRET_KEY')
 if not secret_key:
     raise RuntimeError(
         "SECRET_KEY is not set. Create a .env from .env.example and set SECRET_KEY"
     )
 app.config['SECRET_KEY'] = secret_key
-# From blog/tutorial TODO: register app with OAuth2Client and update secret keys
+
+# Optional OAuth provider config passthrough
 app.config['OAUTH2_PROVIDERS'] = {
-    # Google OAuth 2.0 documentation:
-    # https://developers.google.com/identity/protocols/oauth2/web-server#httprest
     'google': {
         'client_id': os.environ.get('GOOGLE_CLIENT_ID'),
         'client_secret': os.environ.get('GOOGLE_CLIENT_SECRET'),
@@ -70,9 +54,6 @@ app.config['OAUTH2_PROVIDERS'] = {
         },
         'scopes': ['https://www.googleapis.com/auth/userinfo.email'],
     },
-
-    # GitHub OAuth 2.0 documentation:
-    # https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps
     'github': {
         'client_id': os.environ.get('GITHUB_CLIENT_ID'),
         'client_secret': os.environ.get('GITHUB_CLIENT_SECRET'),
@@ -84,9 +65,6 @@ app.config['OAUTH2_PROVIDERS'] = {
         },
         'scopes': ['user:email'],
     },
-    # TODO: validate that this is the right info for strava
-    # Strava OAuth 2.0 documentation:
-    # https://developers.strava.com/docs/authentication/
     'strava': {
         'client_id': os.environ.get('STRAVA_CLIENT_ID'),
         'client_secret': os.environ.get('STRAVA_CLIENT_SECRET'),
@@ -99,10 +77,10 @@ app.config['OAUTH2_PROVIDERS'] = {
         'scopes': ['view_private'],
     },
 }
+
+# Extensions
 toolbar = DebugToolbarExtension(app)
 login_manager = LoginManager()
-
-
 connect_db(app)
 bcrypt.init_app(app)
 CORS(
@@ -111,20 +89,18 @@ CORS(
     expose_headers=["Content-Type", "Authorization"],
     supports_credentials=False,
 )
+Migrate(app, db)
 
-migrate = Migrate(app, db)
 
-
+# Root routes
 @app.get('/hello')
 def say_hello():
-    """Return simple "Hello" Greeting."""
     html = "<html><body><h1>Hello</h1></body></html>"
     return html
 
 
 @app.get('/health')
 def health():
-    """Basic health check including DB connectivity."""
     try:
         db.session.execute(text("SELECT 1"))
         db_ok = True
@@ -134,584 +110,22 @@ def health():
     return jsonify(status="ok" if db_ok else "degraded", db="ok" if db_ok else "unavailable"), status_code
 
 
+# Register blueprints
+from .routes.auth_routes import bp as auth_bp
+from .routes.users import bp as users_bp
+from .routes.activities import bp as activities_bp
+from .routes.categories import bp as categories_bp
 
+app.register_blueprint(auth_bp)
+app.register_blueprint(users_bp)
+app.register_blueprint(activities_bp)
+app.register_blueprint(categories_bp)
 
-############################################################
-# User signup/login/logout
 
+# Error handlers and CLI
+from .errors import register_error_handlers
+from .cli import register_cli
 
+register_error_handlers(app)
+register_cli(app)
 
-@app.route('/signup', methods=["POST"])
-@json_form_required(UserAddForm)
-def signup():
-    """Handle user signup.
-
-    Create new user and add to DB. Redirect to home page.
-
-    If form not valid, present form.
-
-    If the there already is a user with that username: flash message
-    and re-present form.
-    """
-
-    from flask import g
-    received = g.json
-    form = g.form
-
-    email = received.get("email")
-    password = received.get("password")
-    first_name = received.get("first_name")
-    last_name = received.get("last_name")
-    birthday = received.get("birthday")
-    weight = received.get("weight")
-    gender = received.get("gender")
-    benchmarks = received.get("benchmarks")
-
-    # Accept benchmarks as JSON or string
-    if isinstance(benchmarks, str):
-        try:
-            import json as _json
-            benchmarks = _json.loads(benchmarks)
-        except Exception:
-            benchmarks = None
-
-    try:
-        user = User.signup(
-            email=email,
-            password=password,
-            first_name=first_name,
-            last_name=last_name,
-            birthday=birthday,
-            weight=weight,
-            gender=gender,
-            benchmarks=benchmarks,
-        )
-        db.session.commit()
-    except IntegrityError:
-        db.session.rollback()
-        return jsonify(message="Email already registered"), 409
-
-    token = create_access_token(email)
-    return jsonify(user=user.serialize(), token=token), 201
-
-
-@app.route('/login', methods=["POST"])
-@json_form_required(LoginForm)
-def login():
-    """Handle user login and redirect to homepage on success."""
-
-    from flask import g
-    received = g.json
-    form = g.form
-
-    email = received.get("email")
-    password = received.get("password")
-
-    user = User.authenticate(email, password)
-
-    if not user:
-        return jsonify(message='Invalid email or password'), 401
-
-    token = create_access_token(email)
-    return jsonify(user=user.serialize(), token=token)
-
-
-@app.route('/logout', methods=["POST"])
-def logout():
-    """Stateless JWT: client drops token; nothing to do server-side."""
-    return jsonify(message="logged out")
-
-############################################################
-# General User routes - TODO: this was vibe coded don't trust
-
-
-@app.get('/me')
-@jwt_required
-def me():
-    from flask import g
-    return jsonify(user=g.current_user.serialize())
-
-
-@app.patch('/me')
-@jwt_required
-@json_form_required(UserEditForm)
-def update_me():
-    """Update the current user's profile using JWT auth.
-
-    Accepts a JSON body with any subset of fields:
-    - email, first_name, last_name, birthday (YYYY-MM-DD),
-      weight (int), gender (str), benchmarks (JSON object or JSON string),
-      password (min length enforced).
-    Returns the updated user. If the email changes, a new token is returned.
-    """
-    from flask import g
-    user = g.current_user
-    received = g.json
-    form = g.form
-
-    # Track whether email changed to refresh JWT
-    old_email = user.email
-
-    # Update fields if provided
-    if 'email' in received and received['email']:
-        user.email = received['email']
-    if 'first_name' in received and received['first_name']:
-        user.first_name = received['first_name']
-    if 'last_name' in received and received['last_name']:
-        user.last_name = received['last_name']
-    if 'birthday' in received and received['birthday']:
-        # WTForms DateField already parsed; assign from form to ensure coercion
-        user.birthday = form.birthday.data
-    if 'weight' in received and received['weight'] is not None:
-        user.weight = form.weight.data
-    if 'gender' in received and received['gender']:
-        user.gender = received['gender']
-    if 'benchmarks' in received:
-        benchmarks = received['benchmarks']
-        if isinstance(benchmarks, str):
-            try:
-                import json as _json
-                benchmarks = _json.loads(benchmarks)
-            except Exception:
-                benchmarks = None
-        user.benchmarks = benchmarks
-    if 'password' in received and received['password']:
-        # Length validated by form; hash and set
-        from .models import bcrypt as _bcrypt
-        user.password = _bcrypt.generate_password_hash(received['password']).decode('UTF-8')
-
-    try:
-        db.session.commit()
-    except IntegrityError:
-        db.session.rollback()
-        return jsonify(message='Email already in use'), 409
-
-    # Issue new token if email changed
-    new_token = None
-    if user.email != old_email:
-        new_token = create_access_token(user.email)
-
-    result = {"user": user.serialize()}
-    if new_token:
-        result["token"] = new_token
-    return jsonify(result)
-
-
-@app.patch('/me/password')
-@jwt_required
-@json_form_required(PasswordChangeForm)
-def change_password():
-    """Change the current user's password.
-
-    Requires JWT auth and validates the current password.
-    Body: {"current_password": str, "new_password": str (min 6)}
-    """
-    from flask import g
-    user = g.current_user
-    received = g.json
-    form = g.form
-
-    current_password = received.get('current_password')
-    new_password = received.get('new_password')
-
-    # Rate limit failed attempts: 5 failures per 15 minutes
-    window = datetime.utcnow() - timedelta(minutes=15)
-    failed_count = db.session.query(func.count(PasswordChangeLog.id)).filter(
-        PasswordChangeLog.user_id == user.id,
-        PasswordChangeLog.success.is_(False),
-        PasswordChangeLog.created_at >= window,
-    ).scalar() or 0
-    if failed_count >= 5:
-        return jsonify(message='Too many failed attempts. Try again in 15 minutes'), 429
-
-    # Verify current password
-    if not bcrypt.check_password_hash(user.password, current_password):
-        log = PasswordChangeLog(user_id=user.id, ip=request.remote_addr, success=False)
-        db.session.add(log)
-        db.session.commit()
-        return jsonify(message='Current password is incorrect'), 401
-
-    # Optional: prevent reusing the same password
-    if bcrypt.check_password_hash(user.password, new_password):
-        return jsonify(message='New password must be different from current password'), 400
-
-    user.password = bcrypt.generate_password_hash(new_password).decode('UTF-8')
-    log = PasswordChangeLog(user_id=user.id, ip=request.remote_addr, success=True)
-    db.session.add(log)
-    db.session.commit()
-
-    return jsonify(message='Password updated successfully')
-
-
-@app.delete('/me')
-@jwt_required
-@json_form_required(DeleteAccountForm)
-def delete_me():
-    """Delete the current user's account with validation.
-
-    Requirements:
-    - JWT auth
-    - Body must include current_password and confirm_email matching the user's email
-    """
-    from flask import g
-    user = g.current_user
-    received = g.json
-
-    current_password = received.get('current_password')
-    confirm_email = received.get('confirm_email')
-
-    if confirm_email != user.email:
-        return jsonify(message='Confirmation email does not match'), 400
-
-    if not bcrypt.check_password_hash(user.password, current_password):
-        return jsonify(message='Current password is incorrect'), 401
-
-    db.session.delete(user)
-    db.session.commit()
-
-    return jsonify(message='Account deleted'), 200
-
-
-############################################################
-# Activity routes
-
-
-@app.post('/me/activities')
-@jwt_required
-@json_form_required(ActivityForm)
-def log_activity():
-    """Create a new activity for the current user.
-
-    Body JSON fields:
-    - title (str, <=20), category (str, <=20), distance (float, >=0),
-      duration (HH:MM:SS), time (HH:MM:SS), notes (optional str),
-      complete (optional bool)
-    Returns the created activity as JSON.
-    """
-    from flask import g
-    user = g.current_user
-    form = g.form
-
-    # Resolve category via id or name
-    cat_obj = None
-    if form.category_id.data:
-        cat_obj = ActivityCategory.query.get(form.category_id.data)
-        if not cat_obj:
-            return jsonify(message='Category not found'), 400
-    elif form.category.data:
-        name = form.category.data.strip()
-        cat_obj = ActivityCategory.query.filter(func.lower(ActivityCategory.name) == name.lower()).one_or_none()
-        if not cat_obj:
-            return jsonify(message='Category not found'), 400
-    else:
-        return jsonify(message='category_id or category is required'), 400
-
-    activity = Activity(
-        title=form.title.data,
-        distance=form.distance.data,
-        duration=form.duration.data,
-        notes=form.notes.data or None,
-        user_id=user.id,
-        time=form.time.data,
-        complete=bool(form.complete.data),
-        category_id=cat_obj.id,
-    )
-
-    db.session.add(activity)
-    db.session.commit()
-
-    payload = {
-        "id": activity.id,
-        "title": activity.title,
-        "category_id": activity.category_id,
-        "category": activity.category.name if activity.category else None,
-        "distance": activity.distance,
-        "duration": activity.duration.isoformat() if activity.duration else None,
-        "notes": activity.notes,
-        "user_id": activity.user_id,
-        "time": activity.time.isoformat() if activity.time else None,
-        "complete": activity.complete,
-    }
-
-    return jsonify(activity=payload), 201
-
-
-@app.get('/activity-categories')
-def list_activity_categories():
-    """List available activity categories. Optional ?q= filter by name."""
-    q = request.args.get('q', type=str)
-    query = ActivityCategory.query
-    if q:
-        query = query.filter(ActivityCategory.name.ilike(f"%{q}%"))
-    cats = query.order_by(ActivityCategory.name.asc()).all()
-    return jsonify(categories=[c.serialize() for c in cats])
-
-
-@app.get('/me/activities')
-@jwt_required
-def list_my_activities():
-    """List activities for the current user.
-
-    Optional query params:
-    - category_id: int
-    - complete: bool (true/false)
-    - limit: int (default 50, max 100)
-    - offset: int (default 0)
-    """
-    from flask import g
-    user = g.current_user
-
-    q = Activity.query.filter(Activity.user_id == user.id)
-
-    category_id = request.args.get('category_id', type=int)
-    if category_id is not None:
-        q = q.filter(Activity.category_id == category_id)
-
-    complete_param = request.args.get('complete')
-    if complete_param is not None:
-        val = complete_param.strip().lower()
-        if val in ('true', '1', 'yes'):
-            q = q.filter(Activity.complete.is_(True))
-        elif val in ('false', '0', 'no'):
-            q = q.filter(Activity.complete.is_(False))
-
-    limit = request.args.get('limit', default=50, type=int)
-    offset = request.args.get('offset', default=0, type=int)
-    limit = max(1, min(100, limit or 50))
-    offset = max(0, offset or 0)
-
-    activities = q.order_by(Activity.id.desc()).offset(offset).limit(limit).all()
-
-    def _act_payload(a: Activity):
-        return {
-            "id": a.id,
-            "title": a.title,
-            "category_id": a.category_id,
-            "category": a.category.name if a.category else None,
-            "distance": a.distance,
-            "duration": a.duration.isoformat() if a.duration else None,
-            "notes": a.notes,
-            "user_id": a.user_id,
-            "time": a.time.isoformat() if a.time else None,
-            "complete": a.complete,
-        }
-
-    return jsonify(activities=[_act_payload(a) for a in activities], count=len(activities))
-
-
-@app.get('/me/activities/<int:activity_id>')
-@jwt_required
-def get_my_activity(activity_id: int):
-    """Get a single activity owned by the current user."""
-    from flask import g
-    user = g.current_user
-    a = (
-        Activity.query
-        .filter(Activity.id == activity_id, Activity.user_id == user.id)
-        .one_or_none()
-    )
-    if not a:
-        return jsonify(message="Activity not found"), 404
-    payload = {
-        "id": a.id,
-        "title": a.title,
-        "category_id": a.category_id,
-        "category": a.category.name if a.category else None,
-        "distance": a.distance,
-        "duration": a.duration.isoformat() if a.duration else None,
-        "notes": a.notes,
-        "user_id": a.user_id,
-        "time": a.time.isoformat() if a.time else None,
-        "complete": a.complete,
-    }
-    return jsonify(activity=payload)
-
-
-@app.route("/api/activities/<int:activity_id>", methods=["DELETE"])  # legacy path
-@jwt_required
-def delete_activity(activity_id: int):
-    """Delete one of the current user's activities by ID.
-
-    Legacy path kept for compatibility; use /me/activities/<id> instead.
-    """
-    from flask import g
-    user = g.current_user
-    activity = Activity.query.filter(
-        Activity.id == activity_id, Activity.user_id == user.id
-    ).one_or_none()
-    if not activity:
-        return jsonify(message="Activity not found"), 404
-    db.session.delete(activity)
-    db.session.commit()
-    return "", 204
-
-
-@app.delete('/me/activities/<int:activity_id>')
-@jwt_required
-def delete_my_activity(activity_id: int):
-    """Preferred route: delete an activity owned by the current user."""
-    from flask import g
-    user = g.current_user
-    activity = Activity.query.filter(
-        Activity.id == activity_id, Activity.user_id == user.id
-    ).one_or_none()
-    if not activity:
-        return jsonify(message="Activity not found"), 404
-    db.session.delete(activity)
-    db.session.commit()
-    return "", 204
-
-
-@app.patch('/me/activities/<int:activity_id>')
-@jwt_required
-@json_form_required(ActivityUpdateForm)
-def update_my_activity(activity_id: int):
-    """Update an activity owned by the current user.
-
-    Accepts any subset of fields from the activity creation payload.
-    Category may be updated via category_id or category name.
-    """
-    from flask import g
-    user = g.current_user
-    received = g.json
-    form = g.form
-
-    activity = Activity.query.filter(
-        Activity.id == activity_id, Activity.user_id == user.id
-    ).one_or_none()
-    if not activity:
-        return jsonify(message="Activity not found"), 404
-
-    # Title
-    if 'title' in received and received['title'] is not None:
-        activity.title = form.title.data
-
-    # Category resolution
-    if 'category_id' in received or 'category' in received:
-        cat_obj = None
-        if 'category_id' in received and received['category_id'] is not None:
-            cat_obj = ActivityCategory.query.get(form.category_id.data)
-            if not cat_obj:
-                return jsonify(message='Category not found'), 400
-        elif 'category' in received and received['category']:
-            name = form.category.data.strip()
-            cat_obj = ActivityCategory.query.filter(
-                func.lower(ActivityCategory.name) == name.lower()
-            ).one_or_none()
-            if not cat_obj:
-                return jsonify(message='Category not found'), 400
-        if cat_obj:
-            activity.category_id = cat_obj.id
-
-    # Distance
-    if 'distance' in received and received['distance'] is not None:
-        activity.distance = form.distance.data
-
-    # Duration
-    if 'duration' in received and received['duration']:
-        activity.duration = form.duration.data
-
-    # Time
-    if 'time' in received and received['time']:
-        activity.time = form.time.data
-
-    # Notes
-    if 'notes' in received:
-        activity.notes = received['notes'] or None
-
-    # Complete
-    if 'complete' in received:
-        activity.complete = bool(form.complete.data)
-
-    db.session.commit()
-
-    payload = {
-        "id": activity.id,
-        "title": activity.title,
-        "category_id": activity.category_id,
-        "category": activity.category.name if activity.category else None,
-        "distance": activity.distance,
-        "duration": activity.duration.isoformat() if activity.duration else None,
-        "notes": activity.notes,
-        "user_id": activity.user_id,
-        "time": activity.time.isoformat() if activity.time else None,
-        "complete": activity.complete,
-    }
-    return jsonify(activity=payload)
-
-
-
-############################################################
-# Error Handlers
-
-
-def _json_error(status_code: int, message: str, **extra):
-    payload = {"error": {"code": status_code, "message": message}}
-    if extra:
-        payload["error"].update(extra)
-    return jsonify(payload), status_code
-
-
-@app.errorhandler(400)
-def bad_request(err):
-    msg = err.description if isinstance(err, HTTPException) else "Bad Request"
-    return _json_error(400, msg)
-
-
-@app.errorhandler(401)
-def unauthorized(err):
-    msg = err.description if isinstance(err, HTTPException) else "Unauthorized"
-    return _json_error(401, msg)
-
-
-@app.errorhandler(403)
-def forbidden(err):
-    msg = err.description if isinstance(err, HTTPException) else "Forbidden"
-    return _json_error(403, msg)
-
-
-@app.errorhandler(404)
-def not_found(err):
-    msg = err.description if isinstance(err, HTTPException) else "Not Found"
-    return _json_error(404, msg)
-
-
-@app.errorhandler(405)
-def method_not_allowed(err):
-    msg = err.description if isinstance(err, HTTPException) else "Method Not Allowed"
-    return _json_error(405, msg)
-
-
-@app.errorhandler(422)
-def unprocessable_entity(err):
-    msg = err.description if isinstance(err, HTTPException) else "Unprocessable Entity"
-    return _json_error(422, msg)
-
-
-@app.errorhandler(429)
-def too_many_requests(err):
-    msg = err.description if isinstance(err, HTTPException) else "Too Many Requests"
-    return _json_error(429, msg)
-
-
-@app.errorhandler(Exception)
-def internal_error(err):
-    # Convert any HTTPException not explicitly handled above to JSON
-    if isinstance(err, HTTPException):
-        return _json_error(err.code or 500, err.description or err.name)
-
-    # Log unexpected exceptions and return generic JSON error
-    app.logger.exception("Unhandled exception")
-    return _json_error(500, "Internal Server Error")
-
-
-############################################################
-# Flask CLI Commands
-
-
-@app.cli.command("seed")
-def seed_command():
-    """Seed database with sample users, categories, and activities."""
-    # Lazy import to avoid circular import at module load
-    from .seed import main as _seed_main
-    _seed_main()
